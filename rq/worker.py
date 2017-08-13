@@ -12,7 +12,7 @@ import sys
 import time
 import traceback
 import warnings
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 try:
     from signal import SIGKILL
@@ -132,10 +132,13 @@ class Worker(object):
                      connection=connection,
                      job_class=job_class,
                      queue_class=queue_class)
-        queues, state, job_id = connection.hmget(worker.key, 'queues', 'state', 'current_job')
+        queues, state, job_id, last_heartbeat = connection.hmget(worker.key, 'queues', 'state', 'current_job',
+                                                                 'last_heartbeat')
         queues = as_text(queues)
         worker._state = as_text(state or '?')
         worker._job_id = job_id or None
+        if last_heartbeat:
+            worker._last_heartbeat = float(last_heartbeat)
         if queues:
             worker.queues = [worker.queue_class(queue,
                                                 connection=connection,
@@ -179,6 +182,7 @@ class Worker(object):
         self.failed_queue = get_failed_queue(connection=self.connection,
                                              job_class=self.job_class)
         self.last_cleaned_at = None
+        self._last_heartbeat = None
 
         # By default, push the "move-to-failed-queue" exception handler onto
         # the stack
@@ -252,6 +256,13 @@ class Worker(object):
         This can be used to make `ps -ef` output more readable.
         """
         setprocname('rq: {0}'.format(message))
+
+    @property
+    def last_heartbeat(self):
+        """Returns last heartbeat in Python's datetime object."""
+        if self._last_heartbeat:
+            return datetime.fromtimestamp(self._last_heartbeat)
+
 
     def register_birth(self):
         """Registers its own birth."""
@@ -525,6 +536,8 @@ class Worker(object):
         timeout = max(timeout, self.default_worker_ttl)
         connection = pipeline if pipeline is not None else self.connection
         connection.expire(self.key, timeout)
+        self._last_heartbeat = time.time()
+        connection.hset(self.key, 'last_heartbeat', self._last_heartbeat)
         self.log.debug('Sent heartbeat to prevent worker timeout. '
                        'Next one should arrive within {0} seconds.'.format(timeout))
 

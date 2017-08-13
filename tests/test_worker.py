@@ -4,7 +4,7 @@ from __future__ import (absolute_import, division, print_function,
 
 import os
 import shutil
-from datetime import timedelta
+from datetime import date, timedelta
 from time import sleep
 import signal
 import time
@@ -106,16 +106,28 @@ class TestWorker(RQTestCase):
         )
 
     def test_find_by_key(self):
-        """Worker.find_by_key restores queues, state and job_id."""
+        """Worker.find_by_key restores worker state."""
         queues = [Queue('foo'), Queue('bar')]
         w = Worker(queues)
         w.register_death()
         w.register_birth()
         w.set_state(WorkerStatus.STARTED)
+
         worker = Worker.find_by_key(w.key)
         self.assertEqual(worker.queues, queues)
         self.assertEqual(worker.get_state(), WorkerStatus.STARTED)
         self.assertEqual(worker._job_id, None)
+        self.assertEqual(worker._last_heartbeat, None)
+        self.assertEqual(worker.last_heartbeat, None)
+
+        # last_heartbeat should be restored after successful heartbeat
+        timestamp = time.time()
+        w.heartbeat(timeout=2)
+        worker = Worker.find_by_key(w.key)
+        self.assertEqual(worker.get_state(), WorkerStatus.STARTED)
+        self.assertEqual(worker.last_heartbeat.date(), date.today())
+        self.assertTrue(timestamp - 1 < worker._last_heartbeat < timestamp + 1)
+
         w.register_death()
 
     def test_worker_ttl(self):
